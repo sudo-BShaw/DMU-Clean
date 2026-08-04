@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DMU.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.3.0'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'Brandon Shaw / Community'
     CompanyName       = 'Community'
@@ -15,15 +15,16 @@
         'Remove-MigrationArtifacts',
         'New-StrongPassword',
         'Initialize-Logging',
-        'Stop-Logging'
+        'Stop-Logging',
+        'Invoke-BitLockerEscrow'
     )
 
     PrivateData = @{
         PSData = @{
-            Tags         = @('Intune', 'EntraID', 'AzureAD', 'Migration', 'DeviceManagement')
+            Tags         = @('Intune', 'EntraID', 'AzureAD', 'Migration', 'DeviceManagement', 'BitLocker')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/sudo-BShaw/DMU-Clean'
-            ReleaseNotes = 'Added Start-DeviceMigration orchestrator (v0.2.0).'
+            ReleaseNotes = 'v0.3.0 – Phase1 Entra Join + Phase2 BitLocker escrow to Entra ID.'
         }
     }
 }
