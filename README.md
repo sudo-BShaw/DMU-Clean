@@ -4,7 +4,7 @@
 
 Based on the excellent original work by [aollivierre/IntuneDeviceMigration](https://github.com/aollivierre/IntuneDeviceMigration).
 
-> **Status**: Core migration phases **complete** (v0.5.0). Orchestrator + Phases 1–4 are implemented.
+> **Status**: Core migration phases complete + Pester unit tests (v0.5.1).
 
 ## Architecture
 
@@ -12,8 +12,18 @@ Based on the excellent original work by [aollivierre/IntuneDeviceMigration](http
 DMU-Clean/
 ├── Setup.ps1
 ├── config/MigrationConfig.example.psd1
+├── tests/
+│   ├── Helpers.ps1
+│   ├── Run-Tests.ps1
+│   ├── New-StrongPassword.Tests.ps1
+│   ├── Get-DeviceJoinStatus.Tests.ps1
+│   ├── Get-OneDriveSyncStatus.Tests.ps1
+│   ├── Enable-OneDriveKFM.Tests.ps1
+│   ├── Invoke-BitLockerEscrow.Tests.ps1
+│   ├── Remove-MigrationArtifacts.Tests.ps1
+│   └── Start-DeviceMigration.Tests.ps1
 └── src/
-    ├── DMU.psd1 / DMU.psm1          # v0.5.0
+    ├── DMU.psd1 / DMU.psm1          # v0.5.1
     ├── Public/
     │   ├── Start-DeviceMigration.ps1
     │   ├── Get-DeviceJoinStatus.ps1
@@ -46,6 +56,30 @@ Copy-Item .\config\MigrationConfig.example.psd1 .\config\MigrationConfig.psd1
 
 After Phase 1, RunOnce drives Phase 2 → 3 → 4 across reboots.
 
+## Running tests
+
+Requires **Pester 5+** (the runner installs it for CurrentUser if missing).
+
+```powershell
+# From the repo root
+.\tests\Run-Tests.ps1
+
+# Verbose output
+.\tests\Run-Tests.ps1 -Detailed
+```
+
+Coverage includes:
+
+| Area | What is asserted |
+|------|------------------|
+| `New-StrongPassword` | SecureString output, length, charset, uniqueness, read-only |
+| `Get-DeviceJoinStatus` | Object shape, JoinType values, NeedsMigration decision matrix |
+| `Get-OneDriveSyncStatus` | Property surface, explicit UserProfile |
+| `Enable-OneDriveKFM` | Parameters, `-WhatIf` safety |
+| `Invoke-BitLockerEscrow` | Parameters, `-WhatIf` when BitLocker cmdlets exist |
+| `Remove-MigrationArtifacts` | Parameter surface, isolated path cleanup |
+| `Start-DeviceMigration` | Parameters, missing config / placeholder TenantID errors |
+
 ## Migration Phases
 
 | Phase | Script | Main actions |
@@ -55,24 +89,6 @@ After Phase 1, RunOnce drives Phase 2 → 3 → 4 across reboots.
 | **3 – OneDrive** | `Phase3-OneDrive.ps1` | KFM policy, start OneDrive, safety-net file copy, register Phase 4 |
 | **4 – Cleanup** | `Phase4-Cleanup.ps1` | Remove RunOnce entries, scheduled tasks, temp admin, reset registry, remove working dir (logs kept by default) |
 
-### Phase 4 details
-
-- Clears all `DMU-*` RunOnce values  
-- Unregisters tasks under `\AAD Migration\` and deletes the folder  
-- Removes the temporary local admin (`MigrationInProgress` by default)  
-- Clears AutoAdminLogon if it pointed at that account  
-- Resets legal notice / “don’t display last username” / lock-screen overrides  
-- Removes `C:\ProgramData\AADMigration` unless `-PreserveMigrationPath`  
-- Keeps `C:\Logs` by default (`-PreserveLogs:$false` to delete)  
-- Prints final `Get-DeviceJoinStatus` summary  
-
-```powershell
-# Manual cleanup examples
-& 'C:\ProgramData\AADMigration\Scripts\Phase4-Cleanup.ps1' -SkipReboot
-& 'C:\ProgramData\AADMigration\Scripts\Phase4-Cleanup.ps1' -PreserveMigrationPath -SkipReboot
-Remove-MigrationArtifacts -Verbose   # lighter helper used by the orchestrator
-```
-
 ## Helpers (callable standalone)
 
 ```powershell
@@ -81,7 +97,7 @@ Invoke-BitLockerEscrow -MountPoint C: -CreateProtectorIfMissing
 Get-OneDriveSyncStatus
 Enable-OneDriveKFM -TenantID 'your-tenant-guid'
 New-StrongPassword -Length 24
-Remove-MigrationArtifacts -ForceCleanup   # see function params
+Remove-MigrationArtifacts -Verbose
 ```
 
 ## Prerequisites
@@ -90,7 +106,8 @@ Remove-MigrationArtifacts -ForceCleanup   # see function params
 - Entra ID P1 + Intune P1  
 - Valid provisioning package (PPKG)  
 - BitLocker cmdlets (Phase 2)  
-- OneDrive client recommended (Phase 3)
+- OneDrive client recommended (Phase 3)  
+- Pester 5+ (for tests only)
 
 ## Security Notes
 
@@ -103,12 +120,9 @@ Remove-MigrationArtifacts -ForceCleanup   # see function params
 ## Roadmap
 
 - [x] Structure, config, logging, orchestrator  
-- [x] Phase1-EntraJoin  
-- [x] Phase2-EscrowBitlocker  
-- [x] Phase3-OneDrive  
-- [x] **Phase4-Cleanup**  
+- [x] Phase1–Phase4  
+- [x] **Pester unit tests**  
 - [ ] Scheduled-task creation helpers (optional alternative to RunOnce)  
-- [ ] Pester tests  
 - [ ] Expanded docs/
 
 ## Credits
