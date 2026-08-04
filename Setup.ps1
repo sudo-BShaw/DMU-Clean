@@ -5,9 +5,8 @@
 .DESCRIPTION
     - Ensures elevation
     - Sets process execution policy
-    - Loads the DMU module from the local src/ folder
-    - Performs a quick device status check
-    - Hands off to Start-DeviceMigration (when implemented)
+    - Loads the DMU functions from the local src/ folder
+    - Hands off to Start-DeviceMigration
 
     Unlike the original Setup.ps1, this version does NOT re-download the entire
     repository on every run. It expects you to have cloned or extracted the repo.
@@ -15,7 +14,10 @@
 
 [CmdletBinding()]
 param(
+    [string]$ConfigPath,
+
     [switch]$ForceCleanup,
+
     [switch]$SkipStatusCheck
 )
 
@@ -23,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 
 #region Helpers
 function Test-IsAdmin {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
@@ -50,10 +52,11 @@ if ($PSVersionTable.PSVersion.Major -ne 5) {
 # Elevate if needed
 if (-not (Test-IsAdmin)) {
     Write-SetupLog 'Not running as administrator. Relaunching elevated...' -Level 'NOTICE'
-    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
-    if ($ForceCleanup)   { $args += '-ForceCleanup' }
-    if ($SkipStatusCheck){ $args += '-SkipStatusCheck' }
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Verb RunAs
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+    if ($ConfigPath)       { $argList += "-ConfigPath", $ConfigPath }
+    if ($ForceCleanup)     { $argList += '-ForceCleanup' }
+    if ($SkipStatusCheck)  { $argList += '-SkipStatusCheck' }
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs
     exit
 }
 
@@ -63,47 +66,29 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 $repoRoot = $PSScriptRoot
 Write-SetupLog "Repository root: $repoRoot"
 
-# Dot-source public functions (simple approach until full module is ready)
+# Dot-source Public and Private functions
 $publicPath  = Join-Path $repoRoot 'src\Public'
 $privatePath = Join-Path $repoRoot 'src\Private'
 
-if (Test-Path $publicPath) {
-    Get-ChildItem -Path $publicPath -Filter '*.ps1' | ForEach-Object {
-        . $_.FullName
-        Write-SetupLog "Loaded $($_.Name)"
-    }
-}
-if (Test-Path $privatePath) {
-    Get-ChildItem -Path $privatePath -Filter '*.ps1' | ForEach-Object {
-        . $_.FullName
-        Write-SetupLog "Loaded $($_.Name)"
+foreach ($path in @($publicPath, $privatePath)) {
+    if (Test-Path $path) {
+        Get-ChildItem -Path $path -Filter '*.ps1' | ForEach-Object {
+            . $_.FullName
+            Write-SetupLog "Loaded $($_.Name)"
+        }
     }
 }
 
-# Optional cleanup
-if ($ForceCleanup) {
-    Write-SetupLog 'ForceCleanup requested – removing previous migration artifacts...' -Level 'NOTICE'
-    if (Get-Command Remove-MigrationArtifacts -ErrorAction SilentlyContinue) {
-        Remove-MigrationArtifacts -Verbose
-    }
+if (-not (Get-Command Start-DeviceMigration -ErrorAction SilentlyContinue)) {
+    Write-SetupLog 'Start-DeviceMigration function not found. Ensure src/Public/Start-DeviceMigration.ps1 exists.' -Level 'ERROR'
+    exit 1
 }
 
-# Status check
-if (-not $SkipStatusCheck -and (Get-Command Get-DeviceJoinStatus -ErrorAction SilentlyContinue)) {
-    Write-SetupLog 'Checking current device join / enrollment status...'
-    $status = Get-DeviceJoinStatus
-    Write-SetupLog "Join type: $($status.JoinType) | MDM enrolled: $($status.IsMDMEnrolled) | Needs migration: $($status.NeedsMigration)"
+# Hand off to the orchestrator
+$params = @{}
+if ($ConfigPath)      { $params['ConfigPath']      = $ConfigPath }
+if ($ForceCleanup)    { $params['ForceCleanup']    = $true }
+if ($SkipStatusCheck) { $params['SkipStatusCheck'] = $true }
 
-    if (-not $status.NeedsMigration) {
-        Write-SetupLog 'Device is already fully Entra-joined and Intune-enrolled. Nothing to do.' -Level 'NOTICE'
-        exit 0
-    }
-}
-
-Write-SetupLog 'DMU Clean Edition bootstrap complete.' -Level 'NOTICE'
-Write-SetupLog 'Next steps: implement / call Start-DeviceMigration once the remaining modules are migrated.' -Level 'NOTICE'
-
-# Future hand-off point
-# if (Get-Command Start-DeviceMigration -ErrorAction SilentlyContinue) {
-#     Start-DeviceMigration
-# }
+Write-SetupLog 'Calling Start-DeviceMigration...' -Level 'NOTICE'
+Start-DeviceMigration @params
