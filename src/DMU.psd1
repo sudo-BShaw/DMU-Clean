@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DMU.psm1'
-    ModuleVersion     = '0.6.0'
+    ModuleVersion     = '0.6.1'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'Brandon Shaw / Community'
     CompanyName       = 'Community'
@@ -30,7 +30,7 @@
             Tags         = @('Intune', 'EntraID', 'AzureAD', 'Migration', 'DeviceManagement', 'BitLocker', 'OneDrive')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/sudo-BShaw/DMU-Clean'
-            ReleaseNotes = 'v0.6.0 – Scheduled-task helpers (Register/Get/Unregister-DMUScheduledTask, Register-MigrationPhaseTasks) and -UseScheduledTasks on the orchestrator.'
+            ReleaseNotes = 'v0.6.1 – Expanded documentation under docs/ (architecture, getting started, phases, security, troubleshooting, and more).'
         }
     }
 }
