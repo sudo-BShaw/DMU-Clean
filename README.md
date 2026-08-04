@@ -10,7 +10,7 @@ Based on the excellent original work by [aollivierre/IntuneDeviceMigration](http
 - **Clear configuration** – example-only config files
 - **Maintainability** – consistent naming, modern PowerShell practices, and documentation
 
-> **Status**: Active development. Core orchestrator + Phase 1 (Entra Join) are implemented.
+> **Status**: Active development. Orchestrator + Phase 1 (Entra Join) + Phase 2 (BitLocker escrow) are implemented.
 
 ## Key Improvements Over Original
 
@@ -29,20 +29,22 @@ Based on the excellent original work by [aollivierre/IntuneDeviceMigration](http
 DMU-Clean/
 ├── README.md
 ├── LICENSE
-├── Setup.ps1                      # Thin entry point → Start-DeviceMigration
+├── Setup.ps1
 ├── config/
 │   └── MigrationConfig.example.psd1
 ├── src/
-│   ├── DMU.psd1 / DMU.psm1
+│   ├── DMU.psd1 / DMU.psm1          # v0.3.0
 │   ├── Public/
 │   │   ├── Start-DeviceMigration.ps1
 │   │   ├── Get-DeviceJoinStatus.ps1
 │   │   └── Remove-MigrationArtifacts.ps1
 │   ├── Private/
 │   │   ├── Initialize-Logging.ps1
-│   │   └── New-StrongPassword.ps1
+│   │   ├── New-StrongPassword.ps1
+│   │   └── Invoke-BitLockerEscrow.ps1
 │   └── Scripts/
-│       └── Phase1-EntraJoin.ps1   ← PPKG + RunOnce hand-off
+│       ├── Phase1-EntraJoin.ps1
+│       └── Phase2-EscrowBitlocker.ps1
 ├── tests/
 └── docs/
 ```
@@ -50,96 +52,92 @@ DMU-Clean/
 ## Quick Start
 
 ```powershell
-# Clone
 git clone https://github.com/sudo-BShaw/DMU-Clean.git
 cd DMU-Clean
 
-# Copy and edit configuration (NEVER commit real secrets)
 Copy-Item .\config\MigrationConfig.example.psd1 .\config\MigrationConfig.psd1
 # Edit TenantID and ProvisioningPack path
 
-# Prepare only (stage scripts, create temp user, etc.)
+# Prepare only
 .\Setup.ps1 -ForceCleanup
 
-# Prepare + immediately run Phase 1 (apply PPKG, register Phase 2, reboot)
+# Prepare + run Phase 1 (PPKG → RunOnce Phase 2 → reboot)
 .\Setup.ps1 -ForceCleanup -LaunchPhase1
 
-# Same but skip the automatic reboot
+# Skip automatic reboot
 .\Setup.ps1 -LaunchPhase1 -SkipReboot
 ```
 
-## Phase 1 – Entra Join (`src/Scripts/Phase1-EntraJoin.ps1`)
+## Migration Phases
 
-| Step | Action |
-|------|--------|
-| 1 | Load config & initialize logging |
-| 2 | Validate the provisioning package (PPKG) exists |
-| 3 | Optionally set a "Migration in Progress" wallpaper / lock screen |
-| 4 | Apply the PPKG via `Install-ProvisioningPackage` (or `provtool.exe` fallback) |
-| 5 | Register Phase 2 via `HKLM\...\RunOnce` |
-| 6 | Copy Phase 2 script into the migration working directory |
-| 7 | Reboot (unless `-SkipReboot`) so Entra Join can complete and Phase 2 runs |
+### Phase 1 – Entra Join (`Phase1-EntraJoin.ps1`)
+1. Validate PPKG  
+2. Optional migration wallpaper  
+3. `Install-ProvisioningPackage` (or `provtool.exe`)  
+4. Register Phase 2 via RunOnce  
+5. Reboot (unless `-SkipReboot`)
 
-You can also run Phase 1 directly after staging:
+### Phase 2 – BitLocker Escrow (`Phase2-EscrowBitlocker.ps1`)
+1. Escrow recovery password protectors to Entra ID via `BackupToAAD-BitLockerKeyProtector`  
+2. Apply post-migration registry settings (legal notice, disable AutoAdminLogon, hide last username)  
+3. Register Phase 3 (OneDrive) via RunOnce when available, otherwise a cleanup fallback  
+4. Reboot (unless `-SkipReboot`)
+
+You can also run the escrow helper standalone:
 
 ```powershell
-& 'C:\ProgramData\AADMigration\Scripts\Phase1-EntraJoin.ps1' `
-    -ConfigPath 'C:\ProgramData\AADMigration\MigrationConfig.psd1'
+Invoke-BitLockerEscrow -MountPoint C: -CreateProtectorIfMissing
 ```
+
+**Important:** Always verify the recovery key appears in the Entra ID / Intune admin center after escrow. Policy mismatches can cause the cmdlet to report success while the key is not yet visible.
 
 ## What `Start-DeviceMigration` does
 
-1. Loads and validates configuration (refuses placeholder TenantID)
-2. Initializes consistent logging
-3. Optionally removes previous migration artifacts (`-ForceCleanup`)
-4. Checks device join / Intune enrollment status
-5. Creates required working directories
-6. Creates / resets the temporary local admin with a **strong random password**
-7. Validates the provisioning package path
-8. **Stages** all `Phase*.ps1` scripts + config into `C:\ProgramData\AADMigration`
+1. Loads and validates configuration  
+2. Initializes logging  
+3. Optional cleanup (`-ForceCleanup`)  
+4. Device join / enrollment status check  
+5. Creates working directories  
+6. Creates / resets temporary local admin with a strong random password  
+7. Validates PPKG path  
+8. Stages all `Phase*.ps1` scripts + config into `C:\ProgramData\AADMigration`  
 9. Optionally launches Phase 1 (`-LaunchPhase1`)
 
 ## Prerequisites
 
-- Windows 10 / 11 (not Server)
-- PowerShell 5.1
-- Administrative rights
-- Entra ID P1 + Intune P1 (for automatic enrollment)
-- A properly configured Windows Provisioning Package (PPKG)
-- Network access to required endpoints
+- Windows 10 / 11  
+- PowerShell 5.1  
+- Administrative rights  
+- Entra ID P1 + Intune P1  
+- Valid Windows Provisioning Package (PPKG)  
+- BitLocker cmdlets available (for Phase 2)
 
 ## Security Notes
 
-- **Never** commit real TenantIDs, PATs, or passwords.
-- Temporary local accounts receive a strong random password generated at runtime.
-- Prefer Windows LAPS for ongoing local admin password management.
+- Never commit real TenantIDs, PATs, or passwords.  
+- Temporary accounts use a cryptographically strong random password.  
+- Prefer Windows LAPS for ongoing local admin management.  
+- Verify BitLocker keys in Entra ID after Phase 2.
 
 ## Roadmap
 
-- [x] New repository + clean structure
-- [x] Example configuration (no secrets)
-- [x] Shared logging bootstrap
-- [x] Clean `Get-DeviceJoinStatus`
-- [x] Thin `Setup.ps1`
-- [x] Modular `Start-DeviceMigration` orchestrator
-- [x] Random strong temp password (`New-StrongPassword`)
-- [x] **Phase1-EntraJoin** (PPKG + RunOnce)
-- [ ] Phase2-EscrowBitlocker
-- [ ] Phase3-OneDrive helpers
-- [ ] Phase4-Cleanup
-- [ ] Scheduled-task helpers
-- [ ] Pester tests
+- [x] Clean structure, example config, shared logging  
+- [x] `Start-DeviceMigration` orchestrator  
+- [x] Strong random temp password  
+- [x] Phase1-EntraJoin  
+- [x] **Phase2-EscrowBitlocker**  
+- [ ] Phase3-OneDrive helpers  
+- [ ] Phase4-Cleanup  
+- [ ] Scheduled-task helpers  
+- [ ] Pester tests  
 - [ ] Full documentation in `docs/`
 
 ## Credits
 
-- Original concept and extensive real-world logic: [aollivierre](https://github.com/aollivierre)
-- Inspiration from community migration approaches (Modern Endpoint, Mauvtek, etc.)
+- Original concept: [aollivierre](https://github.com/aollivierre)  
+- BitLocker escrow pattern: Michael Mardahl / MSEndpointMgr  
+- Community migration approaches (Modern Endpoint, Mauvtek, etc.)
 
 ## License
 
 MIT
-
----
-
-**This is a community-driven clean refactor.** Contributions, issues, and testing feedback are welcome.
