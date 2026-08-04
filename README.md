@@ -4,37 +4,23 @@
 
 Based on the excellent original work by [aollivierre/IntuneDeviceMigration](https://github.com/aollivierre/IntuneDeviceMigration).
 
-> **Status**: v0.6.0 – Core phases + Pester tests + scheduled-task helpers.
+> **Status**: v0.6.1 – Core phases, scheduled-task helpers, Pester tests, and expanded documentation.
 
-## Architecture
+## Documentation
 
-```
-DMU-Clean/
-├── Setup.ps1
-├── config/MigrationConfig.example.psd1
-├── tests/                    # Pester 5 suite + Run-Tests.ps1
-└── src/
-    ├── DMU.psd1 / DMU.psm1   # v0.6.0
-    ├── Public/
-    │   ├── Start-DeviceMigration.ps1
-    │   ├── Get-DeviceJoinStatus.ps1
-    │   ├── Remove-MigrationArtifacts.ps1
-    │   ├── Register-DMUScheduledTask.ps1
-    │   ├── Get-DMUScheduledTask.ps1
-    │   ├── Unregister-DMUScheduledTask.ps1
-    │   └── Register-MigrationPhaseTasks.ps1
-    ├── Private/
-    │   ├── Initialize-Logging.ps1
-    │   ├── New-StrongPassword.ps1
-    │   ├── Invoke-BitLockerEscrow.ps1
-    │   ├── Get-OneDriveSyncStatus.ps1
-    │   └── Enable-OneDriveKFM.ps1
-    └── Scripts/
-        ├── Phase1-EntraJoin.ps1
-        ├── Phase2-EscrowBitlocker.ps1
-        ├── Phase3-OneDrive.ps1
-        └── Phase4-Cleanup.ps1
-```
+Full docs live under **[docs/](docs/README.md)**:
+
+| Guide | Topic |
+|-------|--------|
+| [Architecture](docs/Architecture.md) | Design, layout, phase flow |
+| [Getting Started](docs/Getting-Started.md) | Clone, configure, first run |
+| [Configuration](docs/Configuration.md) | Config keys and validation |
+| [Phases](docs/Phases.md) | Phase 1–4 detail |
+| [Scheduled Tasks](docs/Scheduled-Tasks.md) | RunOnce vs `\DMU\` tasks |
+| [Functions](docs/Functions.md) | API reference |
+| [Security](docs/Security.md) | Secrets, temp admin, BitLocker |
+| [Testing](docs/Testing.md) | Pester suite |
+| [Troubleshooting](docs/Troubleshooting.md) | Common failures |
 
 ## Quick Start
 
@@ -45,85 +31,39 @@ cd DMU-Clean
 Copy-Item .\config\MigrationConfig.example.psd1 .\config\MigrationConfig.psd1
 # Edit TenantID and ProvisioningPack path
 
-# Classic RunOnce chain
 .\Setup.ps1 -ForceCleanup -LaunchPhase1
-
-# Register Phase 2–4 as SYSTEM scheduled tasks under \DMU\ (AtStartup)
-.\Setup.ps1 -ForceCleanup -UseScheduledTasks -LaunchPhase1
+.\Setup.ps1 -ForceCleanup -UseScheduledTasks -LaunchPhase1   # also register \DMU\ tasks
 ```
 
-## Scheduled-task helpers
+## Architecture (summary)
 
-Phase scripts still register **RunOnce** by default. For a more durable hand-off (survives some logon paths better, visible in Task Scheduler), use the helpers under `\DMU\`:
-
-| Function | Purpose |
-|----------|---------|
-| `Register-DMUScheduledTask` | Create one SYSTEM task (AtStartup / AtLogon / Once / OnDemand) |
-| `Get-DMUScheduledTask` | List DMU tasks (also surfaces legacy `\AAD Migration\`) |
-| `Unregister-DMUScheduledTask` | Remove one or all; optional `-IncludeLegacy -RemoveFolder` |
-| `Register-MigrationPhaseTasks` | Wire Phase 2–4 in one call |
-
-```powershell
-# After staging scripts via Start-DeviceMigration
-Register-MigrationPhaseTasks -Force
-
-# Inspect
-Get-DMUScheduledTask
-
-# Tear down
-Unregister-DMUScheduledTask -IncludeLegacy -RemoveFolder
+```
+Setup.ps1 → Start-DeviceMigration
+  → Phase1 Entra Join (PPKG)
+  → Phase2 BitLocker escrow
+  → Phase3 OneDrive KFM + safety-net copy
+  → Phase4 Cleanup
 ```
 
-Orchestrator switch: **`-UseScheduledTasks`** (also on `Setup.ps1`).
-
-## Migration Phases
-
-| Phase | Script | Main actions |
-|-------|--------|--------------|
-| **1 – Entra Join** | `Phase1-EntraJoin.ps1` | Apply PPKG, register next hop, reboot |
-| **2 – BitLocker** | `Phase2-EscrowBitlocker.ps1` | Escrow keys to Entra ID, post-join registry |
-| **3 – OneDrive** | `Phase3-OneDrive.ps1` | KFM policy, safety-net file copy |
-| **4 – Cleanup** | `Phase4-Cleanup.ps1` | Remove tasks/temp user/artifacts, reset registry |
+Helpers: `Get-DeviceJoinStatus`, `Invoke-BitLockerEscrow`, `Get-OneDriveSyncStatus`, `Enable-OneDriveKFM`, `Register-DMUScheduledTask`, `New-StrongPassword`, and more — see [Functions](docs/Functions.md).
 
 ## Tests
 
 ```powershell
 .\tests\Run-Tests.ps1
-.\tests\Run-Tests.ps1 -Detailed
 ```
 
-## Helpers
+## Security
 
-```powershell
-Get-DeviceJoinStatus
-Invoke-BitLockerEscrow -MountPoint C: -CreateProtectorIfMissing
-Get-OneDriveSyncStatus
-Enable-OneDriveKFM -TenantID 'your-tenant-guid'
-New-StrongPassword -Length 24
-Remove-MigrationArtifacts -Verbose
-```
-
-## Prerequisites
-
-- Windows 10 / 11, PowerShell 5.1, admin rights  
-- Entra ID P1 + Intune P1  
-- Valid PPKG  
-- Pester 5+ (tests only)
-
-## Security Notes
-
-- Never commit real secrets.  
-- Temp admin uses a strong random password.  
-- Prefer Windows LAPS long-term.  
-- Verify BitLocker keys in Entra ID after Phase 2.
+Never commit real TenantIDs or PPKGs. Temp admin passwords are generated at runtime. Verify BitLocker keys in Entra ID after Phase 2. Details: [Security](docs/Security.md).
 
 ## Roadmap
 
-- [x] Structure, config, logging, orchestrator  
-- [x] Phase1–Phase4  
-- [x] Pester unit tests  
-- [x] **Scheduled-task helpers**  
-- [ ] Expanded docs/
+- [x] Modular structure + orchestrator  
+- [x] Phases 1–4  
+- [x] Pester tests  
+- [x] Scheduled-task helpers  
+- [x] Expanded docs  
 
 ## Credits
 
