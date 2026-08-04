@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DMU.psm1'
-    ModuleVersion     = '0.5.1'
+    ModuleVersion     = '0.6.0'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'Brandon Shaw / Community'
     CompanyName       = 'Community'
@@ -18,7 +18,11 @@
         'Stop-Logging',
         'Invoke-BitLockerEscrow',
         'Get-OneDriveSyncStatus',
-        'Enable-OneDriveKFM'
+        'Enable-OneDriveKFM',
+        'Register-DMUScheduledTask',
+        'Get-DMUScheduledTask',
+        'Unregister-DMUScheduledTask',
+        'Register-MigrationPhaseTasks'
     )
 
     PrivateData = @{
@@ -26,7 +30,7 @@
             Tags         = @('Intune', 'EntraID', 'AzureAD', 'Migration', 'DeviceManagement', 'BitLocker', 'OneDrive')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/sudo-BShaw/DMU-Clean'
-            ReleaseNotes = 'v0.5.1 – Pester 5 unit tests for core helpers and orchestrator parameter surface.'
+            ReleaseNotes = 'v0.6.0 – Scheduled-task helpers (Register/Get/Unregister-DMUScheduledTask, Register-MigrationPhaseTasks) and -UseScheduledTasks on the orchestrator.'
         }
     }
 }
