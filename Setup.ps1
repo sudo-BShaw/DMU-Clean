@@ -22,7 +22,9 @@ param(
 
     [switch]$LaunchPhase1,
 
-    [switch]$SkipReboot
+    [switch]$SkipReboot,
+
+    [switch]$UseScheduledTasks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,11 +59,12 @@ if ($PSVersionTable.PSVersion.Major -ne 5) {
 if (-not (Test-IsAdmin)) {
     Write-SetupLog 'Not running as administrator. Relaunching elevated...' -Level 'NOTICE'
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
-    if ($ConfigPath)       { $argList += '-ConfigPath'; $ConfigPath }
-    if ($ForceCleanup)     { $argList += '-ForceCleanup' }
-    if ($SkipStatusCheck)  { $argList += '-SkipStatusCheck' }
-    if ($LaunchPhase1)     { $argList += '-LaunchPhase1' }
-    if ($SkipReboot)       { $argList += '-SkipReboot' }
+    if ($ConfigPath)        { $argList += '-ConfigPath'; $ConfigPath }
+    if ($ForceCleanup)      { $argList += '-ForceCleanup' }
+    if ($SkipStatusCheck)   { $argList += '-SkipStatusCheck' }
+    if ($LaunchPhase1)      { $argList += '-LaunchPhase1' }
+    if ($SkipReboot)        { $argList += '-SkipReboot' }
+    if ($UseScheduledTasks) { $argList += '-UseScheduledTasks' }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs
     exit
 }
@@ -92,11 +95,12 @@ if (-not (Get-Command Start-DeviceMigration -ErrorAction SilentlyContinue)) {
 
 # Hand off to the orchestrator
 $params = @{}
-if ($ConfigPath)      { $params['ConfigPath']      = $ConfigPath }
-if ($ForceCleanup)    { $params['ForceCleanup']    = $true }
-if ($SkipStatusCheck) { $params['SkipStatusCheck'] = $true }
-if ($LaunchPhase1)    { $params['LaunchPhase1']    = $true }
-if ($SkipReboot)      { $params['SkipReboot']      = $true }
+if ($ConfigPath)        { $params['ConfigPath']        = $ConfigPath }
+if ($ForceCleanup)      { $params['ForceCleanup']      = $true }
+if ($SkipStatusCheck)   { $params['SkipStatusCheck']   = $true }
+if ($LaunchPhase1)      { $params['LaunchPhase1']      = $true }
+if ($SkipReboot)        { $params['SkipReboot']        = $true }
+if ($UseScheduledTasks) { $params['UseScheduledTasks'] = $true }
 
 Write-SetupLog 'Calling Start-DeviceMigration...' -Level 'NOTICE'
 Start-DeviceMigration @params
