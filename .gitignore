@@ -13,6 +13,10 @@ C:/temp/
 **/Logs/
 **/Transcript/
 
+# Pester
+tests/TestResults.xml
+*.Tests.xml
+
 # PowerShell
 *.ps1xml
 *.pssc
