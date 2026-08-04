@@ -15,8 +15,7 @@ function Start-DeviceMigration {
         - Optionally cleans previous artifacts
         - Creates a temporary local admin with a strong random password
         - Prepares the migration working directory
-        - Sets up phase placeholders / scheduled-task scaffolding
-        - Provides clear extension points for the remaining phase scripts
+        - Stages Phase scripts and can launch Phase 1
 
     .PARAMETER ConfigPath
         Full path to MigrationConfig.psd1. Defaults to .\config\MigrationConfig.psd1
@@ -28,11 +27,14 @@ function Start-DeviceMigration {
     .PARAMETER SkipStatusCheck
         Skip the dsregcmd-based status check (useful for testing).
 
-    .PARAMETER WhatIf
-        Show what would happen without making changes.
+    .PARAMETER LaunchPhase1
+        After preparation, immediately launch Phase1-EntraJoin.ps1.
+
+    .PARAMETER SkipReboot
+        Passed through to Phase 1 when -LaunchPhase1 is used.
 
     .EXAMPLE
-        Start-DeviceMigration -ForceCleanup
+        Start-DeviceMigration -ForceCleanup -LaunchPhase1
 
     .EXAMPLE
         Start-DeviceMigration -ConfigPath 'C:\DMU\config\MigrationConfig.psd1'
@@ -43,7 +45,11 @@ function Start-DeviceMigration {
 
         [switch]$ForceCleanup,
 
-        [switch]$SkipStatusCheck
+        [switch]$SkipStatusCheck,
+
+        [switch]$LaunchPhase1,
+
+        [switch]$SkipReboot
     )
 
     $ErrorActionPreference = 'Stop'
@@ -69,14 +75,14 @@ Copy the example and fill in real values (never commit secrets):
 
     $config = Import-PowerShellDataFile -Path $ConfigPath
 
-    $MigrationPath       = if ($config.MigrationPath)       { $config.MigrationPath }       else { 'C:\ProgramData\AADMigration' }
-    $LogsPath            = if ($config.LogsPath)            { $config.LogsPath }            else { 'C:\Logs' }
-    $JobName             = if ($config.JobName)             { $config.JobName }             else { 'AAD_Migration' }
-    $TempUserName        = if ($config.TempUser)            { $config.TempUser }            else { 'MigrationInProgress' }
-    $TenantID            = $config.TenantID
-    $UseOneDriveKFM      = [bool]$config.UseOneDriveKFM
-    $InstallOneDrive     = [bool]$config.InstallOneDrive
-    $ProvisioningPack    = $config.ProvisioningPack
+    $MigrationPath        = if ($config.MigrationPath)        { $config.MigrationPath }        else { 'C:\ProgramData\AADMigration' }
+    $LogsPath             = if ($config.LogsPath)             { $config.LogsPath }             else { 'C:\Logs' }
+    $JobName              = if ($config.JobName)              { $config.JobName }              else { 'AAD_Migration' }
+    $TempUserName         = if ($config.TempUser)             { $config.TempUser }             else { 'MigrationInProgress' }
+    $TenantID             = $config.TenantID
+    $UseOneDriveKFM       = [bool]$config.UseOneDriveKFM
+    $InstallOneDrive      = [bool]$config.InstallOneDrive
+    $ProvisioningPack     = $config.ProvisioningPack
     $ProvisioningPackName = $config.ProvisioningPackName
 
     if (-not $TenantID -or $TenantID -eq '00000000-0000-0000-0000-000000000000') {
@@ -182,9 +188,6 @@ Copy the example and fill in real values (never commit secrets):
             }
         }
 
-        # Note: the clear-text password is never written to disk or logs.
-        # Callers that need the password for autologon should receive the SecureString.
-
         # --------------------------------------------------------------
         # 7. Copy / validate provisioning package path
         # --------------------------------------------------------------
@@ -201,39 +204,78 @@ Copy the example and fill in real values (never commit secrets):
         }
 
         # --------------------------------------------------------------
-        # 8. High-level phase scaffolding
-        #    (actual phase scripts will be migrated next)
+        # 8. Stage phase scripts into the migration working directory
         # --------------------------------------------------------------
-        Write-DMU "=== Migration phases (scaffolding) ===" -Level 'NOTICE'
+        $srcScriptsDir  = Join-Path $repoRoot 'src\Scripts'
+        $destScriptsDir = Join-Path $MigrationPath 'Scripts'
 
+        if (Test-Path $srcScriptsDir) {
+            Get-ChildItem -Path $srcScriptsDir -Filter 'Phase*.ps1' -ErrorAction SilentlyContinue | ForEach-Object {
+                $dest = Join-Path $destScriptsDir $_.Name
+                if ($PSCmdlet.ShouldProcess($_.FullName, "Copy to $dest")) {
+                    Copy-Item -Path $_.FullName -Destination $dest -Force
+                    Write-DMU "Staged phase script: $($_.Name)"
+                }
+            }
+        }
+
+        # Also stage a copy of the config so phases can find it easily
+        $destConfig = Join-Path $MigrationPath 'MigrationConfig.psd1'
+        if ($PSCmdlet.ShouldProcess($ConfigPath, "Copy config to $destConfig")) {
+            Copy-Item -Path $ConfigPath -Destination $destConfig -Force
+            Write-DMU "Staged configuration to $destConfig"
+        }
+
+        # --------------------------------------------------------------
+        # 9. Phase overview
+        # --------------------------------------------------------------
+        Write-DMU "=== Migration phases ===" -Level 'NOTICE'
         $phases = @(
-            @{ Name = 'Phase0-Prep';           Description = 'Prepare directories, temp user, config' },
+            @{ Name = 'Phase0-Prep';           Description = 'Prepare directories, temp user, config (this script)' },
             @{ Name = 'Phase1-EntraJoin';      Description = 'Apply PPKG / Entra Join + RunOnce hand-off' },
             @{ Name = 'Phase2-EscrowBitlocker'; Description = 'Escrow BitLocker recovery key to new tenant' },
             @{ Name = 'Phase3-OneDrive';        Description = 'OneDrive KFM / sync status / user file backup' },
             @{ Name = 'Phase4-Cleanup';        Description = 'Remove temp user, scheduled tasks, artifacts' }
         )
-
         foreach ($phase in $phases) {
             Write-DMU "  • $($phase.Name) – $($phase.Description)"
         }
 
-        Write-DMU "Phase scripts live under src/Scripts/ and will be invoked by scheduled tasks / RunOnce." -Level 'NOTICE'
+        # --------------------------------------------------------------
+        # 10. Optionally launch Phase 1 immediately
+        # --------------------------------------------------------------
+        $phase1Script = Join-Path $destScriptsDir 'Phase1-EntraJoin.ps1'
+        if (-not (Test-Path $phase1Script)) {
+            $phase1Script = Join-Path $srcScriptsDir 'Phase1-EntraJoin.ps1'
+        }
 
-        # Placeholder for future scheduled-task creation
-        # Create-MigrationScheduledTasks -MigrationPath $MigrationPath -JobName $JobName ...
+        if ($LaunchPhase1) {
+            if (-not (Test-Path $phase1Script)) {
+                throw "Phase1-EntraJoin.ps1 not found. Expected at $phase1Script"
+            }
+
+            Write-DMU "Launching Phase 1 (Entra Join)..." -Level 'NOTICE'
+
+            $phase1Args = @{
+                ConfigPath = $destConfig
+            }
+            if ($SkipReboot) { $phase1Args['SkipReboot'] = $true }
+
+            if ($PSCmdlet.ShouldProcess($phase1Script, 'Execute Phase 1')) {
+                & $phase1Script @phase1Args
+            }
+        }
+        else {
+            Write-DMU "Phase scripts staged. To start Entra Join run:" -Level 'NOTICE'
+            Write-DMU "  & '$phase1Script' -ConfigPath '$destConfig'"
+            Write-DMU "Or re-run with -LaunchPhase1"
+        }
 
         # --------------------------------------------------------------
-        # 9. Summary
+        # 11. Summary
         # --------------------------------------------------------------
-        Write-DMU "=== Start-DeviceMigration completed successfully ===" -Level 'NOTICE'
-        Write-DMU "Next actions:"
-        Write-DMU "  1. Ensure a valid PPKG is available at the configured path."
-        Write-DMU "  2. Implement / migrate the Phase* scripts under src/Scripts/."
-        Write-DMU "  3. Create the interactive / SYSTEM scheduled tasks that call those phases."
-        Write-DMU "  4. Prefer Windows LAPS for ongoing local admin password management."
+        Write-DMU "=== Start-DeviceMigration completed ===" -Level 'NOTICE'
 
-        # Return useful information for callers / testing
         [PSCustomObject]@{
             Success            = $true
             TenantID           = $TenantID
@@ -241,6 +283,8 @@ Copy the example and fill in real values (never commit secrets):
             TempUserName       = $TempUserName
             LogsPath           = $LogsPath
             ProvisioningPack   = $ProvisioningPack
+            Phase1Staged       = (Test-Path $phase1Script)
+            Phase1Launched     = [bool]$LaunchPhase1
             Timestamp          = Get-Date
         }
     }
