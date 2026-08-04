@@ -16,6 +16,7 @@ function Start-DeviceMigration {
         - Creates a temporary local admin with a strong random password
         - Prepares the migration working directory
         - Stages Phase scripts and can launch Phase 1
+        - Optionally registers Phase 2–4 as scheduled tasks (\DMU\)
 
     .PARAMETER ConfigPath
         Full path to MigrationConfig.psd1. Defaults to .\config\MigrationConfig.psd1
@@ -33,11 +34,15 @@ function Start-DeviceMigration {
     .PARAMETER SkipReboot
         Passed through to Phase 1 when -LaunchPhase1 is used.
 
+    .PARAMETER UseScheduledTasks
+        Register Phase 2–4 under \DMU\ as SYSTEM scheduled tasks (AtStartup for
+        the first remaining phase). Complements or replaces RunOnce hand-off.
+
     .EXAMPLE
         Start-DeviceMigration -ForceCleanup -LaunchPhase1
 
     .EXAMPLE
-        Start-DeviceMigration -ConfigPath 'C:\DMU\config\MigrationConfig.psd1'
+        Start-DeviceMigration -UseScheduledTasks -ForceCleanup
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -49,7 +54,9 @@ function Start-DeviceMigration {
 
         [switch]$LaunchPhase1,
 
-        [switch]$SkipReboot
+        [switch]$SkipReboot,
+
+        [switch]$UseScheduledTasks
     )
 
     $ErrorActionPreference = 'Stop'
@@ -118,6 +125,9 @@ Copy the example and fill in real values (never commit secrets):
         if ($ForceCleanup) {
             Write-DMU "ForceCleanup requested – removing previous artifacts..." -Level 'NOTICE'
             if ($PSCmdlet.ShouldProcess('Migration artifacts', 'Remove')) {
+                if (Get-Command Unregister-DMUScheduledTask -ErrorAction SilentlyContinue) {
+                    Unregister-DMUScheduledTask -IncludeLegacy -RemoveFolder -Confirm:$false -ErrorAction SilentlyContinue
+                }
                 Remove-MigrationArtifacts `
                     -MigrationPath $MigrationPath `
                     -LogsPath $LogsPath `
@@ -232,7 +242,7 @@ Copy the example and fill in real values (never commit secrets):
         Write-DMU "=== Migration phases ===" -Level 'NOTICE'
         $phases = @(
             @{ Name = 'Phase0-Prep';           Description = 'Prepare directories, temp user, config (this script)' },
-            @{ Name = 'Phase1-EntraJoin';      Description = 'Apply PPKG / Entra Join + RunOnce hand-off' },
+            @{ Name = 'Phase1-EntraJoin';      Description = 'Apply PPKG / Entra Join + hand-off' },
             @{ Name = 'Phase2-EscrowBitlocker'; Description = 'Escrow BitLocker recovery key to new tenant' },
             @{ Name = 'Phase3-OneDrive';        Description = 'OneDrive KFM / sync status / user file backup' },
             @{ Name = 'Phase4-Cleanup';        Description = 'Remove temp user, scheduled tasks, artifacts' }
@@ -242,7 +252,31 @@ Copy the example and fill in real values (never commit secrets):
         }
 
         # --------------------------------------------------------------
-        # 10. Optionally launch Phase 1 immediately
+        # 10. Optional scheduled-task registration for Phase 2–4
+        # --------------------------------------------------------------
+        $scheduledTasks = @()
+        if ($UseScheduledTasks) {
+            if (Get-Command Register-MigrationPhaseTasks -ErrorAction SilentlyContinue) {
+                Write-DMU "Registering Phase 2–4 as scheduled tasks under \DMU\..." -Level 'NOTICE'
+                if ($PSCmdlet.ShouldProcess('Phase 2-4', 'Register scheduled tasks')) {
+                    $scheduledTasks = @(Register-MigrationPhaseTasks `
+                        -MigrationPath $MigrationPath `
+                        -ConfigPath $destConfig `
+                        -Phases 2, 3, 4 `
+                        -Trigger AtStartup `
+                        -Force)
+                    foreach ($st in $scheduledTasks) {
+                        Write-DMU "  Registered $($st.TaskName) ($($st.Trigger))"
+                    }
+                }
+            }
+            else {
+                Write-DMU "Register-MigrationPhaseTasks not loaded – skipping scheduled-task registration." -Level 'WARNING'
+            }
+        }
+
+        # --------------------------------------------------------------
+        # 11. Optionally launch Phase 1 immediately
         # --------------------------------------------------------------
         $phase1Script = Join-Path $destScriptsDir 'Phase1-EntraJoin.ps1'
         if (-not (Test-Path $phase1Script)) {
@@ -269,10 +303,13 @@ Copy the example and fill in real values (never commit secrets):
             Write-DMU "Phase scripts staged. To start Entra Join run:" -Level 'NOTICE'
             Write-DMU "  & '$phase1Script' -ConfigPath '$destConfig'"
             Write-DMU "Or re-run with -LaunchPhase1"
+            if ($UseScheduledTasks) {
+                Write-DMU "Scheduled tasks registered for Phase 2–4 (AtStartup / OnDemand)."
+            }
         }
 
         # --------------------------------------------------------------
-        # 11. Summary
+        # 12. Summary
         # --------------------------------------------------------------
         Write-DMU "=== Start-DeviceMigration completed ===" -Level 'NOTICE'
 
@@ -285,6 +322,7 @@ Copy the example and fill in real values (never commit secrets):
             ProvisioningPack   = $ProvisioningPack
             Phase1Staged       = (Test-Path $phase1Script)
             Phase1Launched     = [bool]$LaunchPhase1
+            ScheduledTasks     = $scheduledTasks
             Timestamp          = Get-Date
         }
     }
