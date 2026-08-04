@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DMU.psm1'
-    ModuleVersion     = '0.4.0'
+    ModuleVersion     = '0.5.0'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'Brandon Shaw / Community'
     CompanyName       = 'Community'
@@ -26,7 +26,7 @@
             Tags         = @('Intune', 'EntraID', 'AzureAD', 'Migration', 'DeviceManagement', 'BitLocker', 'OneDrive')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/sudo-BShaw/DMU-Clean'
-            ReleaseNotes = 'v0.4.0 – Phase3 OneDrive KFM, sync status, and safety-net user file copy.'
+            ReleaseNotes = 'v0.5.0 – All four migration phases implemented (Entra Join, BitLocker escrow, OneDrive, Cleanup).'
         }
     }
 }
