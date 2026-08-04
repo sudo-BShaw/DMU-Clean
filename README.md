@@ -4,7 +4,7 @@
 
 Based on the excellent original work by [aollivierre/IntuneDeviceMigration](https://github.com/aollivierre/IntuneDeviceMigration).
 
-> **Status**: Active development. Phases 1–3 are implemented (Entra Join → BitLocker escrow → OneDrive).
+> **Status**: Core migration phases **complete** (v0.5.0). Orchestrator + Phases 1–4 are implemented.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ DMU-Clean/
 ├── Setup.ps1
 ├── config/MigrationConfig.example.psd1
 └── src/
-    ├── DMU.psd1 / DMU.psm1          # v0.4.0
+    ├── DMU.psd1 / DMU.psm1          # v0.5.0
     ├── Public/
     │   ├── Start-DeviceMigration.ps1
     │   ├── Get-DeviceJoinStatus.ps1
@@ -27,7 +27,8 @@ DMU-Clean/
     └── Scripts/
         ├── Phase1-EntraJoin.ps1
         ├── Phase2-EscrowBitlocker.ps1
-        └── Phase3-OneDrive.ps1
+        ├── Phase3-OneDrive.ps1
+        └── Phase4-Cleanup.ps1
 ```
 
 ## Quick Start
@@ -39,59 +40,55 @@ cd DMU-Clean
 Copy-Item .\config\MigrationConfig.example.psd1 .\config\MigrationConfig.psd1
 # Edit TenantID and ProvisioningPack path
 
-.\Setup.ps1 -ForceCleanup -LaunchPhase1          # full prep + Phase 1
+.\Setup.ps1 -ForceCleanup -LaunchPhase1          # prep + Phase 1 → automatic chain
 .\Setup.ps1 -LaunchPhase1 -SkipReboot            # no auto-reboot
 ```
 
+After Phase 1, RunOnce drives Phase 2 → 3 → 4 across reboots.
+
 ## Migration Phases
 
-### Phase 1 – Entra Join
-1. Validate PPKG  
-2. Optional migration wallpaper  
-3. Apply PPKG (`Install-ProvisioningPackage` / `provtool.exe`)  
-4. Register Phase 2 via RunOnce  
-5. Reboot
+| Phase | Script | Main actions |
+|-------|--------|--------------|
+| **1 – Entra Join** | `Phase1-EntraJoin.ps1` | Validate & apply PPKG, optional wallpaper, register Phase 2, reboot |
+| **2 – BitLocker** | `Phase2-EscrowBitlocker.ps1` | Escrow recovery keys to Entra ID, legal notice / auto-logon registry, register Phase 3 |
+| **3 – OneDrive** | `Phase3-OneDrive.ps1` | KFM policy, start OneDrive, safety-net file copy, register Phase 4 |
+| **4 – Cleanup** | `Phase4-Cleanup.ps1` | Remove RunOnce entries, scheduled tasks, temp admin, reset registry, remove working dir (logs kept by default) |
 
-### Phase 2 – BitLocker Escrow
-1. Escrow recovery keys to Entra ID (`BackupToAAD-BitLockerKeyProtector`)  
-2. Post-migration registry (legal notice, disable AutoAdminLogon)  
-3. Register Phase 3 via RunOnce  
-4. Reboot  
+### Phase 4 details
 
-Standalone: `Invoke-BitLockerEscrow -MountPoint C: -CreateProtectorIfMissing`
-
-### Phase 3 – OneDrive
-1. Apply Known Folder Move policy settings (`Enable-OneDriveKFM`) when `UseOneDriveKFM = $true`  
-2. Start the OneDrive client if installed  
-3. Report sync / folder status (`Get-OneDriveSyncStatus`)  
-4. Safety-net copy of Desktop / Documents / Pictures / Downloads into `OneDrive\DMU-Backup`  
-5. Register Phase 4 (cleanup) via RunOnce  
-6. Reboot  
-
-Standalone helpers:
+- Clears all `DMU-*` RunOnce values  
+- Unregisters tasks under `\AAD Migration\` and deletes the folder  
+- Removes the temporary local admin (`MigrationInProgress` by default)  
+- Clears AutoAdminLogon if it pointed at that account  
+- Resets legal notice / “don’t display last username” / lock-screen overrides  
+- Removes `C:\ProgramData\AADMigration` unless `-PreserveMigrationPath`  
+- Keeps `C:\Logs` by default (`-PreserveLogs:$false` to delete)  
+- Prints final `Get-DeviceJoinStatus` summary  
 
 ```powershell
-Get-OneDriveSyncStatus
-Enable-OneDriveKFM -TenantID 'your-tenant-guid'
+# Manual cleanup examples
+& 'C:\ProgramData\AADMigration\Scripts\Phase4-Cleanup.ps1' -SkipReboot
+& 'C:\ProgramData\AADMigration\Scripts\Phase4-Cleanup.ps1' -PreserveMigrationPath -SkipReboot
+Remove-MigrationArtifacts -Verbose   # lighter helper used by the orchestrator
 ```
 
-**Note:** Full OneDrive sync still requires the end user to sign in with their Entra ID account. Phase 3 prepares policy and a local safety-net copy; it does not replace user sign-in.
+## Helpers (callable standalone)
 
-## What `Start-DeviceMigration` does
-
-1. Validates config (rejects placeholder TenantID)  
-2. Logging  
-3. Optional cleanup  
-4. Device status check  
-5. Working directories + strong-password temp admin  
-6. Stages all `Phase*.ps1` scripts + config into `C:\ProgramData\AADMigration`  
-7. Optionally launches Phase 1 (`-LaunchPhase1`)
+```powershell
+Get-DeviceJoinStatus
+Invoke-BitLockerEscrow -MountPoint C: -CreateProtectorIfMissing
+Get-OneDriveSyncStatus
+Enable-OneDriveKFM -TenantID 'your-tenant-guid'
+New-StrongPassword -Length 24
+Remove-MigrationArtifacts -ForceCleanup   # see function params
+```
 
 ## Prerequisites
 
 - Windows 10 / 11, PowerShell 5.1, admin rights  
 - Entra ID P1 + Intune P1  
-- Valid PPKG  
+- Valid provisioning package (PPKG)  
 - BitLocker cmdlets (Phase 2)  
 - OneDrive client recommended (Phase 3)
 
@@ -100,18 +97,19 @@ Enable-OneDriveKFM -TenantID 'your-tenant-guid'
 - Never commit real secrets.  
 - Temp admin uses a cryptographically strong random password.  
 - Prefer Windows LAPS long-term.  
-- Verify BitLocker keys in Entra ID after Phase 2.
+- Verify BitLocker keys in Entra ID after Phase 2.  
+- Confirm OneDrive sync after the user signs in.
 
 ## Roadmap
 
 - [x] Structure, config, logging, orchestrator  
 - [x] Phase1-EntraJoin  
 - [x] Phase2-EscrowBitlocker  
-- [x] **Phase3-OneDrive**  
-- [ ] Phase4-Cleanup  
-- [ ] Scheduled-task helpers  
+- [x] Phase3-OneDrive  
+- [x] **Phase4-Cleanup**  
+- [ ] Scheduled-task creation helpers (optional alternative to RunOnce)  
 - [ ] Pester tests  
-- [ ] docs/
+- [ ] Expanded docs/
 
 ## Credits
 
